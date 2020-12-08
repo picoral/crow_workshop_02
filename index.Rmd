@@ -1,0 +1,360 @@
+---
+title: "Corpus Searches in R"
+author: "Adriana Picoral"
+date: "12/8/2020"
+output: 
+  html_document:
+    toc: TRUE
+    number_section: TRUE
+    includes:
+      in_header: ext_logo.html
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Before the workshop
+
+Make sure you install both R and RStudio for this workshop.
+
+1. Download and install R from https://cran.r-project.org (If you are a Windows user, first determine if you are running the 32 or the 64 bit version)
+
+2. Download and install RStudio from https://rstudio.com/products/rstudio/download/#download
+
+If you have R and RStudio already installed in your computer, make sure your R version is greater than `4.0` by entering `sessionInfo()` in your console.
+
+```{r eval=FALSE}
+sessionInfo()
+```
+
+# Data for the Workshop
+
+I will be providing you with [50 text files](raw_corpus.zip) from [MISCUSP](https://elicorpora.info/) in the English discipline subset. I'd like to thank [Dr. Ute Römer](http://uteroemer.weebly.com) for allowing us to use these files for this workshop.
+
+These text files have been annotated with the [Stanford Dependency Parser](https://nlp.stanford.edu/software/stanford-dependencies.html) and are thus in tab separated format ([CoNLL-U Format](https://universaldependencies.org/format.html)). If you need instructions on how to tag your text files with the Stanfor Dependency Parser, check [these workshop materials by Larissa Goulart](https://lg845.github.io/LAEL_CoreNLP/)
+
+# Install and Load Tidverse
+
+
+For this workshop, we will be using the `tidyverse` package. Make sure you install it before proceeding.
+
+
+```{r eval=FALSE}
+install.packages("tidyverse")
+```
+
+Once the package is installed, you can load it using `library()`.
+
+```{r}
+library(tidyverse)
+```
+
+# Read Text Files as a Corpus in R
+
+The easiest way to read multiple files in R and combine all of them in the same data frame is by using a `for` loop.
+
+We first create a list of the files we want to read in with `list.files()`.
+
+```{r eval=FALSE}
+# create list of files to read in
+files <- list.files(path = "raw_corpus",
+                    pattern = "*.txt.conll",
+                    full.names = TRUE)
+
+```
+
+We then create an empty data frame with `annotated_files <- data.frame()` which we `bind_rows` with each file in our `for` loop.
+
+```{r eval=FALSE}
+# read in all files
+# first create empty data frame
+annotated_files <- data.frame()
+# for each file in our list of files
+for (i in 1:length(files)){
+  # read the tab separated file in
+  this_file <- read_tsv(files[i], col_names = FALSE)
+  # create a column with the filename, do some clean up of the file name
+  this_file$filename <- gsub("\\.txt\\.conll|raw_corpus\\/", "", files[i])
+  # combine this file with all the others
+  annotated_files <- bind_rows(annotated_files,
+                               this_file)
+}
+```
+
+These annotated files do not have a header, so the column names are automatically provided by R and are `X1`, `X2` and so on. We can change the column names using `rename()`
+
+```{r eval=FALSE}
+# change column names
+annotated_files <- annotated_files %>%
+  rename(token_number = X1,
+         token = X2,
+         lemma = X3,
+         pos = X4,
+         entity = X5,
+         dependency = X6,
+         dep_label = X7)
+```
+
+Right now we only have information about each individual token. Adding which tokens belong together in the same sentence allows us to retrieve the whole sentence in a search. The first step is to add a sentence number. Again we are going to use a `for` loop and a sentence counter (i.e., `sentence_count`) that increases by `1` every time a new sentence starts (i.e., the token number is equal to 1).
+
+```{r eval=FALSE}
+# add sentence number
+# this for loop takes a while to run
+# start with creating a column for sentence number
+annotated_files$sentence_number <- NA
+# start the sentence counter
+sentence_count <- 0
+# for every row/token in our corpus
+for (i in 1:nrow(annotated_files)) {
+  # if the token number is one, that indicates a new sentence start
+  if (annotated_files$token_number[i] == 1) {
+    # add to sentence counter
+    sentence_count <- sentence_count + 1
+  }
+  # add sentence_count to the appropriate column and row (i.e., row i)
+  annotated_files$sentence_number[i] <- sentence_count
+}
+```
+
+Now that we have what tokens belong to the same sentence together, we can create a new column in our data with all tokens collapsed together.
+
+```{r eval=FALSE}
+# now that we have sentence number, collapse tokens by sentence in a new
+# sentence column/variable
+annotated_files <- annotated_files %>%
+  group_by(sentence_number) %>%
+  mutate(sentence = paste(token, collapse = " ")) %>%
+  ungroup()
+```
+
+Always `ungroup()` when creating new object that results from a `group_by()` -- this will save you some trouble in the future.
+
+We are done with processing our corpus. To save this processing so you don't have to run this every time you need to analyze or search your corpus, save the data frame to disk.
+
+```{r eval=FALSE}
+# write file out so we don't have to run the whole thing again
+write_csv(annotated_files, "processed_corpus/micusp_engl_subset.csv")
+```
+
+Here's the entire [01-read-corpus-files.R](01-read-corpus-files.R) code:
+
+```{r code=readLines("01-read-corpus-files.R"), eval=FALSE}
+```
+
+# Search your Corpus
+
+I start my second R script with loading libraries and my data.
+
+```{r message=FALSE}
+# load library
+library(tidyverse)
+
+# read data in
+annotated_files <- read_csv("processed_corpus/micusp_engl_subset.csv")
+```
+
+Let's start with the simplest way to search our corpus.
+
+```{r}
+# set search expression to desired string
+search_expression <- "argue"
+
+# simplest way, just match the lemma with the search_expression
+annotated_files %>%
+  filter(lemma == search_expression) %>% 
+  select(sentence_number, sentence) 
+```
+
+## Regular expressions in R
+
+In this workshop, we will use two functions that make use of regular expressions: 
+
+- `grepl()`
+- `gsub()`
+
+In your console, enter first `?grepl()` and then `?gsub()` to read the help pages for these functions.
+
+The function `grepl()` returns `TRUE` for when it finds a match and `FALSE` when it doesn't, which makes it a good function to use for *filtering* data. Here are few simple examples of `grepl()` use.
+
+```{r}
+# the pattern "argue" can be found in "argues"
+grepl("argue", "argues")
+
+# the pattern "argue" is not found in "arguing"
+grepl("argue", "arguing")
+
+# use period to mean any character
+grepl("argu.", "arguing")
+
+# period means ANY character
+grepl("argu.", c("argues", "arguing", "argu7"))
+
+# you can use [a-z] to mean any lower-case letter
+grepl("argu[a-z]", c("argues", "arguing", "argu7"))
+```
+
+Here's a [Basic Regular Expressions in R Cheat Sheet](https://rstudio.com/wp-content/uploads/2016/09/RegExCheatsheet.pdf).
+
+The function `gsub()` replaces global (i.e., all) matches with a replacement string, which makes it a good function to use for changing data with `mutate()`. Here are few simple examples of `gsub()` use.
+
+```{r}
+# the pattern "es" is found in "argues" and is replaced with "ing"
+sub("es", "ing", "argues")
+
+# as with grepl, you the string to find the pattern in can be a vector
+sub("es", "ing", c("argues", "argue"))
+
+# use ? to make a character optional
+sub("es?", "ing", c("argues", "argue"))
+
+# use gsub to replace all matches, not just the first one
+sub("es?", "ing", "He argues and I argue")
+
+# use gsub to replace all matches, not just the first one
+gsub("es?", "ing", "He argues and I argue")
+
+# to match something and repeat that something in the replacement we can use
+# grouping like \\1 and \\2 and so on. Groups are defined by parentheses.
+# use + to mean one or more of something
+gsub("([a-z]+)es?", "will be \\1ing", "He argues and I argue")
+```
+
+Going back to our original corpus search. Instead of matching exactly the same string, we can use the function `grepl()` to use our `search_expression` as a regular expression.
+
+```{r}
+# simplest way, just match the lemma with the search_expression
+annotated_files %>%
+  filter(grepl(search_expression, lemma)) %>% 
+  select(sentence_number, sentence) 
+```
+
+We can highlight our search term in our results. For that, we need to change our `search_expression` slightly by adding parentheses to it, so we can call it in our `gsub()` function with `\\1`. Let's add two stars (i.e., **) just before our search expression.
+
+```{r}
+# set regular expression for our search
+search_expression <- "(argue)"
+
+# simplest way
+annotated_files %>%
+  filter(grepl(search_expression, lemma)) %>% 
+  select(sentence_number, sentence) %>%
+  mutate(sentence = gsub(search_expression, "**\\1", sentence))
+```
+
+---
+
+**CHALLENGE:**
+
+Applying what we've seen about regular expressions, how can you change the search expression to highlight different patterns of use in the corpus?
+
+---
+
+## Key Word In Context (KWIC)
+
+We can create a new variable in our data to indicate whether a lemma matches our search expression.
+
+```{r eval=FALSE}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE))
+```
+
+```{r echo=FALSE}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE)) %>%
+  filter(kwic) %>%
+  select(token, kwic) %>%
+  head() %>%
+  kable()
+```
+
+We can then create the `before` and `after` context for each lemma.
+
+```{r eval=FALSE}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE)) %>%
+  mutate(before = paste(lag(token, 3), lag(token, 2), lag(token)),
+         after = paste(lead(token), lead(token, 2), lead(token, 3)))
+```
+
+```{r echo=FALSE}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE)) %>%
+  mutate(before = paste(lag(token, 3), lag(token, 2), lag(token)),
+         after = paste(lead(token), lead(token, 2), lead(token, 3))) %>%
+  select(before, token, after) %>%
+  head() %>%
+  kable()
+```
+
+Let's clean up the ugly `NAs`.
+
+```{r eval=FALSE}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE)) %>%
+  mutate(before = gsub("NA\\s", "", paste(lag(token, 3), lag(token, 2), lag(token))),
+         after = gsub("NA\\s", "", paste(lead(token), lead(token, 2), lead(token, 3)))
+  ) 
+```
+
+```{r echo=FALSE}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE)) %>%
+  mutate(before = gsub("NA\\s?", "", paste(lag(token, 3), lag(token, 2), lag(token))),
+         after = gsub("NA\\s?", "", paste(lead(token), lead(token, 2), lead(token, 3)))
+  ) %>%
+  select(before, token, after) %>%
+  head() %>%
+  kable()
+```
+
+Finally, we filter for only lemmas that match our search (i.e., `kwic` is `TRUE`) and `select()` only the variables `before`, `token` and `after` in this order.
+
+```{r}
+# kwic way
+annotated_files %>%
+  mutate(kwic = ifelse(grepl(search_expression, lemma),
+                       TRUE, FALSE)) %>%
+  mutate(before = gsub("NA\\s?", "", paste(lag(token, 3), lag(token, 2), lag(token))),
+         after = gsub("NA\\s?", "", paste(lead(token), lead(token, 2), lead(token, 3)))
+  ) %>%
+  filter(kwic) %>%
+  select(before, token, after) %>%
+  head() %>%
+  kable()
+```
+
+Here's the entire [02-corpus-searches.R](02-corpus-searches.R) code:
+
+```{r code=readLines("02-corpus-searches.R"), eval=FALSE}
+```
+
+# MICUSP References
+
+Michigan Corpus of Upper-level Student Papers. (2009). Ann Arbor, MI: The Regents of the University of Michigan
+
+Römer, Ute & Matthew B. O'Donnell. 2011. From student hard drive to web corpus (part 1): The design, compilation and genre classification of the Michigan Corpus of Upper-level Student Papers (MICUSP). Corpora. 6(2): 159-177. http://uteroemer.weebly.com/uploads/5/5/7/7/5577406/roemer_and_odonnell_corpora_article_2011.pdf
+ 
+O'Donnell, Matthew B. & Römer, Ute. 2012. From student hard drive to web corpus (part 2): The annotation and online distribution of the Michigan Corpus of Upper-level Student Papers (MICUSP). Corpora 7(1): 1-18. http://uteroemer.weebly.com/uploads/5/5/7/7/5577406/odonnell_and_roemer_corpora_article_2012.pdf
+
+
+# More Resources
+
+- [Text Mining with R](https://www.tidytextmining.com/) - Free online book.
+
+# Exit Survey
+
+Please take some time to fill out [this workshop's exit survey]().
